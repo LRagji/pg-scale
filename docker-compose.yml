@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  # Primary PostgreSQL (Write Replica)
+  # Docs https://hub.docker.com/r/bitnami/postgresql https://gist.github.com/JosimarCamargo/40f8636563c6e9ececf603e94c3affa7
+  postgres_primary:
+    image: docker.io/bitnami/postgresql:latest
+    container_name: postgres_primary
+    restart: always
+    environment:
+      - POSTGRESQL_PGAUDIT_LOG=READ,WRITE
+      - POSTGRESQL_LOG_HOSTNAME=true
+      - POSTGRESQL_REPLICATION_MODE=master
+      - POSTGRESQL_REPLICATION_USER=repl_user
+      - POSTGRESQL_REPLICATION_PASSWORD=repl_password
+      - POSTGRESQL_USERNAME=postgres
+      - POSTGRESQL_DATABASE=clone
+      - ALLOW_EMPTY_PASSWORD=yes
+    volumes:
+      - ./data/pg-primary:/bitnami/postgresql
+    networks:
+      - internal
+
+  # Secondary PostgreSQL (Read Replica)
+  pg-readers:
+    image: docker.io/bitnami/postgresql:latest
+    restart: always
+    environment:
+      - POSTGRESQL_USERNAME=postgres
+      - ALLOW_EMPTY_PASSWORD=yes
+      - POSTGRESQL_MASTER_HOST=postgres_primary
+      - POSTGRESQL_PGAUDIT_LOG=READ,WRITE
+      - POSTGRESQL_LOG_HOSTNAME=true
+      - POSTGRESQL_REPLICATION_MODE=slave
+      - POSTGRESQL_REPLICATION_USER=repl_user
+      - POSTGRESQL_REPLICATION_PASSWORD=repl_password
+      - POSTGRESQL_MASTER_PORT_NUMBER=5432
+    depends_on:
+      - postgres_primary
+    networks:
+      - internal
+
+  # PgBouncer
+  # pgbouncer:
+  #   image: edoburu/pgbouncer
+  #   container_name: pgbouncer
+  #   restart: always
+  #   ports:
+  #     - "6432:6432"
+  #   depends_on:
+  #     - postgres_primary
+  #     - postgres_secondary
+  #   environment:
+  #     DB_USER: pgp
+  #     DB_PASSWORD: pgp
+  #     DB_HOST: postgres_primary
+  #     DB_PORT: 5432
+  #     DB_NAME: ts
+  #     DB_POOL_SIZE: 20
+  #     DB_POOL_MODE: transaction
+  #     DB_MAX_CLIENT_CONN: 100
+  #   volumes:
+  #     - ./config/pg-bouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini # Mount custom configuration file
+  #     - ./config/pg-bouncer/userlist.txt:/etc/pgbouncer/userlist.txt
+  #   networks:
+  #     - internal
+
+  # PgAdmin
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    restart: always
+    ports:
+      - "8080:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: abc@abc.com
+      PGADMIN_DEFAULT_PASSWORD: abc
+    volumes:
+      - ./data/pgadmin:/var/lib/pgadmin
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
