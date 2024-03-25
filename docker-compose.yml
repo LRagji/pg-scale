@@ -1,10 +1,19 @@
 version: '3.8'
 
+# This that are currently being done
+# 1 postgres_primary is the primary server or main server where all data with latency is saved.
+# 2 pg-readers is the read replica which can handle all reads as it is in async stream replication with primary.(Sync or Async can be choosed currenlty async)
+# 3 pgpool is the load balancer for reads which can be shared across multiple pg-readers
+# 4 we can see load balancing in action when we run select command vs insert command and running `show POOL_BACKEND_STATS` in psql via lb. 
+
+# Future:
+# 1. Dynamically we can spool up readers with scale command, but the entries for them has to done inside load balancer(pgpool) is not currently automated.
+
 services:
   # Primary PostgreSQL (Write Replica)
   # Docs https://hub.docker.com/r/bitnami/postgresql https://gist.github.com/JosimarCamargo/40f8636563c6e9ececf603e94c3affa7
   postgres_primary:
-    image: docker.io/bitnami/postgresql:latest
+    image: bitnami/postgresql:latest
     container_name: postgres_primary
     restart: always
     environment:
@@ -15,7 +24,8 @@ services:
       - POSTGRESQL_REPLICATION_PASSWORD=repl_password
       - POSTGRESQL_USERNAME=postgres
       - POSTGRESQL_DATABASE=clone
-      - ALLOW_EMPTY_PASSWORD=yes
+      - POSTGRESQL_POSTGRES_PASSWORD=postgres
+      - POSTGRESQL_PASSWORD=postgres
     volumes:
       - ./data/pg-primary:/bitnami/postgresql
     networks:
@@ -23,11 +33,13 @@ services:
 
   # Secondary PostgreSQL (Read Replica)
   pg-readers:
-    image: docker.io/bitnami/postgresql:latest
+    image: bitnami/postgresql:latest
+    container_name: pg-readers
     restart: always
     environment:
       - POSTGRESQL_USERNAME=postgres
-      - ALLOW_EMPTY_PASSWORD=yes
+      - POSTGRESQL_POSTGRES_PASSWORD=postgres
+      - POSTGRESQL_PASSWORD=postgres
       - POSTGRESQL_MASTER_HOST=postgres_primary
       - POSTGRESQL_PGAUDIT_LOG=READ,WRITE
       - POSTGRESQL_LOG_HOSTNAME=true
@@ -40,30 +52,30 @@ services:
     networks:
       - internal
 
-  # PgBouncer
-  # pgbouncer:
-  #   image: edoburu/pgbouncer
-  #   container_name: pgbouncer
-  #   restart: always
-  #   ports:
-  #     - "6432:6432"
-  #   depends_on:
-  #     - postgres_primary
-  #     - postgres_secondary
-  #   environment:
-  #     DB_USER: pgp
-  #     DB_PASSWORD: pgp
-  #     DB_HOST: postgres_primary
-  #     DB_PORT: 5432
-  #     DB_NAME: ts
-  #     DB_POOL_SIZE: 20
-  #     DB_POOL_MODE: transaction
-  #     DB_MAX_CLIENT_CONN: 100
-  #   volumes:
-  #     - ./config/pg-bouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini # Mount custom configuration file
-  #     - ./config/pg-bouncer/userlist.txt:/etc/pgbouncer/userlist.txt
-  #   networks:
-  #     - internal
+  # Reader Load-Balancer
+  pgpool:
+    image: bitnami/pgpool:4
+    ports:
+      - 5432:5432
+    environment:
+      - PGPOOL_BACKEND_NODES=0:postgres_primary:5432:0,1:pg-readers:5432:1
+      - PGPOOL_SR_CHECK_USER=repl_user
+      - PGPOOL_SR_CHECK_PASSWORD=repl_password
+      - PGPOOL_ENABLE_LDAP=no
+      - PGPOOL_POSTGRES_USERNAME=postgres
+      - PGPOOL_POSTGRES_PASSWORD=postgres
+      - PGPOOL_ADMIN_USERNAME=admin
+      - PGPOOL_ADMIN_PASSWORD=adminpassword
+    healthcheck:
+      test: [ "CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      - postgres_primary
+      - pg-readers
+    networks:
+      - internal
 
   # PgAdmin
   pgadmin:
